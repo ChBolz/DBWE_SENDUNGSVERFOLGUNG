@@ -1,15 +1,27 @@
 # Python cache
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # Virtual environment
 venv/
 
-# Env files
+# Env files (never push secrets to GitHub!)
 .env
 
 # SQLite database (local dev only)
 *.db
 
-# VS Code settings
+# VS Code / PyCharm settings
 .vscode/
+.idea/
+
+# Flask instance folder (if you ever use it for uploads/config)
+instance/
+
+# Flask-Migrate migration cache
+migrations/versions/__pycache__/
+
+# Logs
+*.log
