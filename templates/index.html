@@ -17,15 +17,14 @@
 <body>
   <h1>Sendungserfassung</h1>
   <p>
-    Lorem ipsum dolor sit amet, consectetur adipiscing elit. Nulla et nisl ac
-    justo tincidunt pulvinar. In hac habitasse platea dictumst. Integer at
-    sapien at mauris egestas rhoncus.
+    Willkommen bei der IPSO-Sendungserfassung. Hier können Sie bequem Ihre Sendungen als Packete zusammenstellen,
+    und anschliessend diese Versenden. Alles mit ein paar einfachen Klicks.
   </p>
 
   <!-- Links are intentionally not functional yet (will 404 for now) -->
   <div class="nav">
-    <a href="/login">Login</a>
-    <a href="/register">Register</a>
+    <a href="{{ url_for('login') }}">Login</a>
+    <a href="{{ url_for('register') }}">Register</a>
   </div>
 </body>
 </html>
