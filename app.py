@@ -1,33 +1,46 @@
 from flask import Flask, render_template, request, url_for
+from flask_sqlalchemy import SQLAlchemy
+from flask_migrate import Migrate
+from config import Config
+
+db = SQLAlchemy()
+migrate = Migrate()
 
 def create_app():
     app = Flask(__name__)
-    # Not used yet, but handy later for sessions/flash
-    app.config["SECRET_KEY"] = "dev"
+    app.config.from_object(Config)
+
+    db.init_app(app)
+    migrate.init_app(app, db)
+
+    from models import (
+        User,
+        ShipmentHead,
+        PackageHead,
+        ShipmentLine,
+        Item,
+        PackageLine,
+    )  # noqa: F401
 
     @app.route("/")
     def index():
         return render_template("index.html")
 
-    # --- Login (placeholder) ---
-    @app.route("/login", methods=["GET"])
+    @app.get("/login")
     def login():
         return render_template("login.html")
 
-    @app.route("/login", methods=["POST"])
+    @app.post("/login")
     def login_post():
-        # We'll implement real auth later
         username = request.form.get("username", "")
         return f"Login not implemented yet. You posted username='{username}'.", 501
 
-    # --- Register (placeholder) ---
-    @app.route("/register", methods=["GET"])
+    @app.get("/register")
     def register():
         return render_template("register.html")
 
-    @app.route("/register", methods=["POST"])
+    @app.post("/register")
     def register_post():
-        # We'll implement real registration later
         username = request.form.get("username", "")
         email = request.form.get("email", "")
         return f"Register not implemented yet. You posted username='{username}', email='{email}'.", 501
