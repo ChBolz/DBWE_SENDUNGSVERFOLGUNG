@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Shipment Created</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    a { color:#005bbb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <h1>Shipment created</h1>
+  <p>New shipment with ID <strong>{{ shipment.id }}</strong> created (status: {{ shipment.status }}).</p>
+  <p><a href="{{ url_for('shipments_list') }}">Back to shipments</a></p>
+</body>
+</html>

@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Shipments</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    table { border-collapse: collapse; min-width: 520px; }
+    th, td { border: 1px solid #ccc; padding: 8px 10px; }
+    th { background: #f4f4f4; text-align: left; }
+    a { color:#005bbb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <h1>Shipments</h1>
+  <p><a href="{{ url_for('shipments_new') }}">+ Create new shipment</a> · <a href="{{ url_for('index') }}">Home</a></p>
+
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Status</th><th>Shipment number</th><th>Created at</th></tr>
+    </thead>
+    <tbody>
+      {% for s in shipments %}
+        <tr>
+          <td>{{ s.id }}</td>
+          <td>{{ s.status }}</td>
+          <td>{{ s.shipment_number or '' }}</td>
+          <td>{{ s.created_at }}</td>
+        </tr>
+      {% endfor %}
+      {% if not shipments %}
+        <tr><td colspan="4">No shipments yet.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</body>
+</html>

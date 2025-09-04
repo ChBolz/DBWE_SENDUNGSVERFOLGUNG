@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>New Shipment</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    button { padding: 8px 12px; }
+    a { color:#005bbb; text-decoration:none; margin-left: 12px; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <h1>Create a new shipment</h1>
+  <form method="post" action="{{ url_for('shipments_create') }}">
+    <!-- No fields yet; just create an 'open' shipment -->
+    <button type="submit">Create shipment</button>
+    <a href="{{ url_for('shipments_list') }}">Cancel</a>
+  </form>
+</body>
+</html>

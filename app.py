@@ -48,6 +48,35 @@ def create_app():
         items = db.session.execute(db.select(Item).order_by(Item.id)).scalars().all()
         return render_template("items.html", items=items)
 
+   # helper: ensure a demo user exists (until real auth is added)
+    def _ensure_demo_user():
+        u = db.session.execute(db.select(User).where(User.username == "demo")).scalar_one_or_none()
+        if not u:
+            u = User(username="demo", email="demo@example.com", password_hash="not-used-yet")
+            db.session.add(u)
+            db.session.commit()
+        return u
+
+    @app.get("/shipments")
+    def shipments_list():
+        rows = db.session.execute(
+            db.select(ShipmentHead).order_by(ShipmentHead.id.desc())
+        ).scalars().all()
+        return render_template("shipments.html", shipments=rows)
+
+    @app.get("/shipments/new")
+    def shipments_new():
+        return render_template("shipment_new.html")
+
+    @app.post("/shipments/new")
+    def shipments_create():
+        user = _ensure_demo_user()
+        sh = ShipmentHead(created_by=user.id)  # status defaults to "open"
+        db.session.add(sh)
+        db.session.commit()
+        # simple redirect back to the list
+        return render_template("shipment_created.html", shipment=sh)
+
     register_cli(app)
     return app
 
