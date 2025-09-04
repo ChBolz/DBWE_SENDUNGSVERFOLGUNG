@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Shipment {{ sh.id }}</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    table { border-collapse: collapse; min-width: 560px; }
+    th, td { border: 1px solid #ccc; padding: 8px 10px; }
+    th { background: #f4f4f4; text-align: left; }
+    form { display: inline; }
+    .actions { margin: 16px 0; }
+    a { color:#005bbb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+    .muted { color:#666; }
+  </style>
+</head>
+<body>
+  <h1>Shipment #{{ sh.id }}</h1>
+
+  <p>
+    Status: <strong>{{ sh.status }}</strong>
+    {% if sh.shipment_number %}
+      · Shipment number: <strong>{{ sh.shipment_number }}</strong>
+    {% endif %}
+    · Created at: {{ sh.created_at }}
+  </p>
+
+  <div class="actions">
+    <a href="{{ url_for('shipments_list') }}">← Back to shipments</a>
+    {% if sh.status == 'open' %}
+      <!-- Add a package -->
+      <form method="post" action="{{ url_for('shipments_add_package', shipment_id=sh.id) }}" style="margin-left:12px;">
+        <button type="submit">+ Add package</button>
+      </form>
+      <!-- Ship the shipment -->
+      <form method="post" action="{{ url_for('shipments_ship', shipment_id=sh.id) }}" style="margin-left:12px;">
+        <button type="submit">Ship this shipment</button>
+      </form>
+    {% else %}
+      <span class="muted" style="margin-left:12px;">Shipment is locked (shipped).</span>
+    {% endif %}
+  </div>
+
+  <h2>Packages</h2>
+  <table>
+    <thead>
+      <tr><th>Line #</th><th>Package ID</th><th>Status</th><th>Shipment number</th><th>Created at</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for line_no, pkg in rows %}
+        <tr>
+          <td>{{ line_no }}</td>
+          <td>{{ pkg.id }}</td>
+          <td>{{ pkg.status }}</td>
+          <td>{{ pkg.shipment_number or '' }}</td>
+          <td>{{ pkg.created_at }}</td>
+          <td>
+            {% if sh.status == 'open' %}
+              <form method="post" action="{{ url_for('shipments_delete_package', shipment_id=sh.id, package_id=pkg.id) }}">
+                <button type="submit">Delete</button>
+              </form>
+            {% else %}
+              <span class="muted">Locked</span>
+            {% endif %}
+          </td>
+        </tr>
+      {% endfor %}
+      {% if not rows %}
+        <tr><td colspan="6">No packages yet.</td></tr>
+      {% endif %}
+    </tbody>
+  </table>
+</body>
+</html>

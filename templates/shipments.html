@@ -23,7 +23,7 @@
     <tbody>
       {% for s in shipments %}
         <tr>
-          <td>{{ s.id }}</td>
+          <td><a href="{{ url_for('shipments_detail', shipment_id=s.id) }}">{{ s.id }}</a></td>
           <td>{{ s.status }}</td>
           <td>{{ s.shipment_number or '' }}</td>
           <td>{{ s.created_at }}</td>

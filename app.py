@@ -1,4 +1,5 @@
-from flask import Flask, render_template, request
+from datetime import datetime
+from flask import Flask, render_template, request, redirect, url_for, abort
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from config import Config
@@ -44,11 +45,11 @@ def create_app():
     @app.get("/items")
     def list_items():
         # Import here to avoid module-level circular imports
-        from models import Item
-        items = db.session.execute(db.select(Item).order_by(Item.id)).scalars().all()
+        from models import Item as ItemModel
+        items = db.session.execute(db.select(ItemModel).order_by(ItemModel.id)).scalars().all()
         return render_template("items.html", items=items)
 
-   # helper: ensure a demo user exists (until real auth is added)
+    # ------------ Helpers ------------
     def _ensure_demo_user():
         u = db.session.execute(db.select(User).where(User.username == "demo")).scalar_one_or_none()
         if not u:
@@ -57,6 +58,13 @@ def create_app():
             db.session.commit()
         return u
 
+    def _get_shipment_or_404(shipment_id: int):
+        sh = db.session.get(ShipmentHead, shipment_id)
+        if not sh:
+            abort(404, "Shipment not found")
+        return sh
+
+    # ------------ Shipments ------------
     @app.get("/shipments")
     def shipments_list():
         rows = db.session.execute(
@@ -74,8 +82,99 @@ def create_app():
         sh = ShipmentHead(created_by=user.id)  # status defaults to "open"
         db.session.add(sh)
         db.session.commit()
-        # simple redirect back to the list
         return render_template("shipment_created.html", shipment=sh)
+
+    @app.get("/shipments/<int:shipment_id>")
+    def shipments_detail(shipment_id):
+        from models import ShipmentLine as SL, PackageHead as PH
+        sh = _get_shipment_or_404(shipment_id)
+        # packages linked via ShipmentLine
+        rows = db.session.execute(
+            db.select(SL.line_no, PH)
+              .join(PH, PH.id == SL.package_no)
+              .where(SL.shipment_no == sh.id)
+              .order_by(SL.line_no.asc())
+        ).all()  # list[(line_no, PackageHead)]
+        return render_template("shipment_detail.html", sh=sh, rows=rows)
+
+    @app.post("/shipments/<int:shipment_id>/packages/new")
+    def shipments_add_package(shipment_id):
+        from models import ShipmentLine as SL, PackageHead as PH
+        sh = _get_shipment_or_404(shipment_id)
+        if sh.status != "open":
+            abort(400, "Shipment is not open")
+
+        user = _ensure_demo_user()
+
+        # 1) create a new empty package
+        pkg = PH(status="open", created_by=user.id, created_at=datetime.utcnow())
+        db.session.add(pkg)
+        db.session.flush()  # get pkg.id
+
+        # 2) link it to the shipment with next line number
+        next_line = db.session.execute(
+            db.select(db.func.coalesce(db.func.max(SL.line_no), 0) + 1)
+              .where(SL.shipment_no == sh.id)
+        ).scalar_one()
+
+        link = SL(shipment_no=sh.id, line_no=next_line, package_no=pkg.id)
+        db.session.add(link)
+        db.session.commit()
+
+        return redirect(url_for("shipments_detail", shipment_id=sh.id))
+
+    @app.post("/shipments/<int:shipment_id>/ship")
+    def shipments_ship(shipment_id):
+        from models import ShipmentLine as SL, PackageHead as PH
+        sh = _get_shipment_or_404(shipment_id)
+        if sh.status != "open":
+            abort(400, "Shipment already shipped")
+
+        # generate a shipment number (simple, unique-enough)
+        sn = f"SN{datetime.utcnow():%Y%m%d}-{sh.id}-{datetime.utcnow():%H%M%S}"
+        sh.status = "shipped"
+        sh.shipment_number = sn
+
+        # copy number to all packages in this shipment and mark them shipped
+        pkg_ids = db.session.execute(
+            db.select(SL.package_no).where(SL.shipment_no == sh.id)
+        ).scalars().all()
+
+        if pkg_ids:
+            db.session.execute(
+                db.update(PH)
+                  .where(PH.id.in_(pkg_ids))
+                  .values(shipment_number=sn, status="shipped")
+            )
+
+        db.session.commit()
+        return redirect(url_for("shipments_detail", shipment_id=sh.id))
+
+    @app.post("/shipments/<int:shipment_id>/packages/<int:package_id>/delete")
+    def shipments_delete_package(shipment_id, package_id):
+        from models import ShipmentLine as SL, PackageHead as PH
+        sh = _get_shipment_or_404(shipment_id)
+        if sh.status != "open":
+            abort(400, "Shipment is not open")
+
+        # find the link; ensure this package belongs to this shipment
+        link = db.session.execute(
+            db.select(SL).where(
+                SL.shipment_no == sh.id,
+                SL.package_no == package_id
+            )
+        ).scalar_one_or_none()
+        if not link:
+            abort(404, "Package not linked to this shipment")
+
+        # delete link first, then the package (to avoid FK issues)
+        db.session.delete(link)
+        pkg = db.session.get(PH, package_id)
+        if pkg:
+            db.session.delete(pkg)
+
+        db.session.commit()
+        return redirect(url_for("shipments_detail", shipment_id=sh.id))
 
     register_cli(app)
     return app
@@ -85,14 +184,14 @@ def register_cli(app):
     @app.cli.command("seed-items")
     def seed_items():
         # Import inside the command to avoid circulars
-        from models import Item
-        if db.session.execute(db.select(Item)).first():
+        from models import Item as ItemModel
+        if db.session.execute(db.select(ItemModel)).first():
             print("Items already exist — skipping.")
             return
         db.session.add_all([
-            Item(description="Karton klein", base_unit="pcs"),
-            Item(description="Karton gross", base_unit="pcs"),
-            Item(description="Klebeband", base_unit="roll"),
+            ItemModel(description="Karton klein", base_unit="pcs"),
+            ItemModel(description="Karton gross", base_unit="pcs"),
+            ItemModel(description="Klebeband", base_unit="roll"),
         ])
         db.session.commit()
         print("Seeded 3 items.")
