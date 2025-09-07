@@ -51,7 +51,7 @@
       {% for line_no, pkg in rows %}
         <tr>
           <td>{{ line_no }}</td>
-          <td>{{ pkg.id }}</td>
+          <td><a href="{{ url_for('packages_detail', package_id=pkg.id) }}">{{ pkg.id }}</a></td>
           <td>{{ pkg.status }}</td>
           <td>{{ pkg.shipment_number or '' }}</td>
           <td>{{ pkg.created_at }}</td>

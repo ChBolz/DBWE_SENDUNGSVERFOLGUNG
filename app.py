@@ -176,6 +176,239 @@ def create_app():
         db.session.commit()
         return redirect(url_for("shipments_detail", shipment_id=sh.id))
 
+    # ------------ Packages: detail + add/remove items ------------
+    @app.get("/packages/<int:package_id>")
+    def packages_detail(package_id: int):
+        from models import PackageHead as PH, PackageLine as PL, Item as IT, ShipmentLine as SL, ShipmentHead as SH
+
+        pkg = db.session.get(PH, package_id)
+        if not pkg:
+            abort(404, "Package not found")
+
+        # find parent shipment (each package belongs to one shipment via ShipmentLine.unique(package_no))
+        shipment_id = db.session.execute(
+            db.select(SL.shipment_no).where(SL.package_no == package_id)
+        ).scalar_one_or_none()
+        shipment = db.session.get(SH, shipment_id) if shipment_id else None
+
+        # lines in this package with item details
+        lines = db.session.execute(
+            db.select(PL, IT)
+              .join(IT, IT.id == PL.item_no)
+              .where(PL.package_no == package_id)
+              .order_by(IT.description.asc())
+        ).all()  # list of (PackageLine, Item)
+
+        # all items to choose from (simple select for now)
+        all_items = db.session.execute(db.select(IT).order_by(IT.description)).scalars().all()
+
+        # locked when shipment shipped or package not open
+        locked = (pkg.status != "open") or (shipment and shipment.status != "open")
+
+        return render_template(
+            "package_detail.html",
+            pkg=pkg,
+            shipment=shipment,
+            lines=lines,
+            all_items=all_items,
+            locked=locked,
+        )
+
+    @app.post("/packages/<int:package_id>/items")
+    def packages_add_item(package_id: int):
+        from models import PackageHead as PH, PackageLine as PL, Item as IT, ShipmentLine as SL, ShipmentHead as SH
+
+        pkg = db.session.get(PH, package_id)
+        if not pkg:
+            abort(404, "Package not found")
+
+        # parent shipment and lock check
+        shipment_id = db.session.execute(
+            db.select(SL.shipment_no).where(SL.package_no == package_id)
+        ).scalar_one_or_none()
+        shipment = db.session.get(SH, shipment_id) if shipment_id else None
+
+        if pkg.status != "open" or (shipment and shipment.status != "open"):
+            abort(400, "Package cannot be modified (shipment/pack locked)")
+
+        # read form inputs
+        try:
+            item_id = int(request.form.get("item_id", "0"))
+            qty = int(request.form.get("quantity", "0"))
+        except ValueError:
+            abort(400, "Invalid quantity")
+
+        if qty <= 0:
+            abort(400, "Quantity must be positive")
+
+        item = db.session.get(IT, item_id)
+        if not item:
+            abort(400, "Item not found")
+
+        # enforce uniqueness (package_no, item_no): update quantity if exists, else insert with next line_no
+        existing = db.session.execute(
+            db.select(PL).where(PL.package_no == package_id, PL.item_no == item_id)
+        ).scalar_one_or_none()
+
+        if existing:
+            existing.quantity = existing.quantity + qty
+        else:
+            next_line = db.session.execute(
+                db.select(db.func.coalesce(db.func.max(PL.line_no), 0) + 1)
+                  .where(PL.package_no == package_id)
+            ).scalar_one()
+            db.session.add(PL(package_no=package_id, line_no=next_line, item_no=item_id, quantity=qty))
+
+        db.session.commit()
+        # redirect back to package page
+        return redirect(url_for("packages_detail", package_id=package_id))
+
+    @app.post("/packages/<int:package_id>/items/<int:item_id>/delete")
+    def packages_delete_item(package_id: int, item_id: int):
+        from models import PackageHead as PH, PackageLine as PL, ShipmentLine as SL, ShipmentHead as SH
+
+        pkg = db.session.get(PH, package_id)
+        if not pkg:
+            abort(404, "Package not found")
+
+        # parent shipment and lock check
+        shipment_id = db.session.execute(
+            db.select(SL.shipment_no).where(SL.package_no == package_id)
+        ).scalar_one_or_none()
+        shipment = db.session.get(SH, shipment_id) if shipment_id else None
+
+        if pkg.status != "open" or (shipment and shipment.status != "open"):
+            abort(400, "Package cannot be modified (shipment/pack locked)")
+
+        line = db.session.execute(
+            db.select(PL).where(PL.package_no == package_id, PL.item_no == item_id)
+        ).scalar_one_or_none()
+        if not line:
+            abort(404, "Line not found")
+
+        db.session.delete(line)
+        db.session.commit()
+        return redirect(url_for("packages_detail", package_id=package_id))
+
+    # ------------ Read-only REST API (API key protected) ------------
+    from flask import Blueprint, jsonify
+
+    api = Blueprint("api", __name__)
+
+    def _require_api_key():
+        key = request.headers.get("X-API-KEY") or request.args.get("api_key")
+        if key != app.config.get("API_KEY"):
+            abort(401, "Invalid or missing API key")
+
+    def _dt(o):
+        return o.isoformat() if o else None
+
+    @api.get("/health")
+    def api_health():
+        _require_api_key()
+        # quick DB roundtrip
+        db.session.execute(db.text("SELECT 1"))
+        return jsonify({"status": "ok"})
+
+    @api.get("/shipments")
+    def api_shipments():
+        _require_api_key()
+        from models import ShipmentHead as SH, ShipmentLine as SL
+
+        # package counts per shipment
+        counts = dict(
+            db.session.execute(
+                db.select(SL.shipment_no, db.func.count(SL.package_no))
+                  .group_by(SL.shipment_no)
+            ).all()
+        )
+
+        rows = db.session.execute(
+            db.select(SH).order_by(SH.id.desc())
+        ).scalars().all()
+
+        data = [{
+            "id": s.id,
+            "status": s.status,
+            "shipment_number": s.shipment_number,
+            "created_at": _dt(s.created_at),
+            "package_count": counts.get(s.id, 0),
+        } for s in rows]
+
+        return jsonify(data)
+
+    @api.get("/shipments/<int:shipment_id>")
+    def api_shipment_detail(shipment_id: int):
+        _require_api_key()
+        from models import ShipmentHead as SH, ShipmentLine as SL, PackageHead as PH
+
+        s = db.session.get(SH, shipment_id)
+        if not s:
+            abort(404, "Shipment not found")
+
+        packages = db.session.execute(
+            db.select(SL.line_no, PH)
+              .join(PH, PH.id == SL.package_no)
+              .where(SL.shipment_no == s.id)
+              .order_by(SL.line_no.asc())
+        ).all()
+
+        return jsonify({
+            "id": s.id,
+            "status": s.status,
+            "shipment_number": s.shipment_number,
+            "created_at": _dt(s.created_at),
+            "packages": [
+                {
+                    "line_no": ln,
+                    "id": p.id,
+                    "status": p.status,
+                    "shipment_number": p.shipment_number,
+                    "created_at": _dt(p.created_at),
+                } for (ln, p) in packages
+            ],
+        })
+
+    @api.get("/packages/<int:package_id>")
+    def api_package_detail(package_id: int):
+        _require_api_key()
+        from models import PackageHead as PH, PackageLine as PL, Item as IT, ShipmentLine as SL
+
+        p = db.session.get(PH, package_id)
+        if not p:
+            abort(404, "Package not found")
+
+        # parent shipment id (via ShipmentLine.unique(package_no))
+        shipment_id = db.session.execute(
+            db.select(SL.shipment_no).where(SL.package_no == package_id)
+        ).scalar_one_or_none()
+
+        lines = db.session.execute(
+            db.select(PL, IT)
+              .join(IT, IT.id == PL.item_no)
+              .where(PL.package_no == package_id)
+              .order_by(PL.line_no.asc())
+        ).all()
+
+        return jsonify({
+            "id": p.id,
+            "status": p.status,
+            "shipment_id": shipment_id,
+            "shipment_number": p.shipment_number,
+            "created_at": _dt(p.created_at),
+            "items": [
+                {
+                    "line_no": pl.line_no,
+                    "item_id": it.id,
+                    "description": it.description,
+                    "quantity": pl.quantity,
+                } for (pl, it) in lines
+            ],
+        })
+
+    # register the blueprint
+    app.register_blueprint(api, url_prefix="/api")
+
     register_cli(app)
     return app
 

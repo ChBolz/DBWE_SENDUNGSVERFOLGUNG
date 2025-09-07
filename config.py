@@ -8,3 +8,5 @@ class Config:
         "sqlite:///app.db"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+
+    API_KEY = os.environ.get("API_KEY", "dev-api-key")

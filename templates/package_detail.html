@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Package {{ pkg.id }}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; }
+    table { border-collapse: collapse; min-width: 560px; }
+    th, td { border: 1px solid #ccc; padding: 8px 10px; }
+    th { background: #f4f4f4; text-align: left; }
+    form { display: inline; }
+    .muted { color:#666; }
+    .actions { margin: 16px 0; }
+    input[type="number"], select { padding: 6px; }
+    button { padding: 8px 12px; }
+    a { color:#005bbb; text-decoration:none; }
+    a:hover { text-decoration:underline; }
+  </style>
+</head>
+<body>
+  <h1>Package #{{ pkg.id }}</h1>
+
+  <p>
+    Status: <strong>{{ pkg.status }}</strong>
+    {% if pkg.shipment_number %} · Shipment number: <strong>{{ pkg.shipment_number }}</strong>{% endif %}
+    {% if shipment %}
+      · Shipment: <a href="{{ url_for('shipments_detail', shipment_id=shipment.id) }}">#{{ shipment.id }}</a>
+      ({{ shipment.status }})
+    {% endif %}
+  </p>
+
+  <div class="actions">
+    <a href="{{ url_for('shipments_detail', shipment_id=shipment.id) }}">← Back to shipment</a>
+    {% if locked %}
+      <span class="muted" style="margin-left:12px;">This package is locked.</span>
+    {% endif %}
+  </div>
+
+  <h2>Items in this package</h2>
+  <table>
+    <thead>
+      <tr><th>Line #</th><th>Item</th><th>Quantity</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+    {% for pl, it in lines %}
+      <tr>
+        <td>{{ pl.line_no }}</td>
+        <td>{{ it.description }}</td>
+        <td>{{ pl.quantity }}</td>
+        <td>
+          {% if not locked %}
+            <form method="post" action="{{ url_for('packages_delete_item', package_id=pkg.id, item_id=it.id) }}">
+              <button type="submit">Remove</button>
+            </form>
+          {% else %}
+            <span class="muted">Locked</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    {% if not lines %}
+      <tr><td colspan="4">No items yet.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+
+  <h3 style="margin-top:20px;">Add item</h3>
+  {% if locked %}
+    <p class="muted">Cannot add items: shipment/package is locked.</p>
+  {% elif not all_items %}
+    <p class="muted">No items are available. Seed items first.</p>
+  {% else %}
+    <form method="post" action="{{ url_for('packages_add_item', package_id=pkg.id) }}">
+      <label>
+        Item
+        <select name="item_id" required>
+          {% for it in all_items %}
+            <option value="{{ it.id }}">{{ it.description }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label style="margin-left:12px;">
+        Quantity
+        <input type="number" name="quantity" min="1" value="1" required />
+      </label>
+      <button type="submit" style="margin-left:12px;">Add to package</button>
+    </form>
+  {% endif %}
+</body>
+</html>
