@@ -235,36 +235,65 @@ def create_app():
     @app.post("/packages/<int:package_id>/items")
     @login_required
     def packages_add_item(package_id: int):
-        from models import PackageHead as PH, PackageLine as PL, Item as IT, ShipmentLine as SL, ShipmentHead as SH
+        from models import PackageHead as PH, PackageLine as PL, Item as IT, ShipmentLine as SL, ShipmentHead as SH, Stock as ST
+
         pkg = db.session.get(PH, package_id)
         if not pkg:
             abort(404, "Package not found")
+
+        # parent shipment & lock
         shipment_id = db.session.execute(
             db.select(SL.shipment_no).where(SL.package_no == package_id)
         ).scalar_one_or_none()
         shipment = db.session.get(SH, shipment_id) if shipment_id else None
         if pkg.status != "open" or (shipment and shipment.status != "open"):
             abort(400, "Package cannot be modified (shipment/pack locked)")
+
+        # inputs
         try:
             item_id = int(request.form.get("item_id", "0"))
             qty = int(request.form.get("quantity", "0"))
         except ValueError:
-            abort(400, "Invalid quantity")
+            return redirect(url_for("packages_detail", package_id=package_id))
+
         if qty <= 0:
-            abort(400, "Quantity must be positive")
+            return redirect(url_for("packages_detail", package_id=package_id))
+
         item = db.session.get(IT, item_id)
         if not item:
-            abort(400, "Item not found")
+            return redirect(url_for("packages_detail", package_id=package_id))
+
+        # --- STOCK CHECK ---
+        stock_row = db.session.get(ST, item_id)
+        on_hand = stock_row.quantity_on_hand if stock_row else 0
+
+        reserved = db.session.execute(
+            db.select(db.func.coalesce(db.func.sum(PL.quantity), 0))
+            .join(PH, PH.id == PL.package_no)
+            .join(SL, SL.package_no == PH.id)
+            .join(SH, SH.id == SL.shipment_no)
+            .where(SH.status == "open", PL.item_no == item_id)
+        ).scalar_one()
+
+        # Will total reservation exceed on-hand if we add qty?
+        if reserved + qty > on_hand:
+            # Optional: show a friendly message
+            return redirect(url_for("packages_detail", package_id=package_id))
+
+        # upsert (package_no, item_no) unique
         existing = db.session.execute(
             db.select(PL).where(PL.package_no == package_id, PL.item_no == item_id)
         ).scalar_one_or_none()
+
         if existing:
             existing.quantity = existing.quantity + qty
         else:
             next_line = db.session.execute(
-                db.select(db.func.coalesce(db.func.max(PL.line_no), 0) + 1).where(PL.package_no == package_id)
+                db.select(db.func.coalesce(db.func.max(PL.line_no), 0) + 1)
+                .where(PL.package_no == package_id)
             ).scalar_one()
             db.session.add(PL(package_no=package_id, line_no=next_line, item_no=item_id, quantity=qty))
+
         db.session.commit()
         return redirect(url_for("packages_detail", package_id=package_id))
 
@@ -287,6 +316,19 @@ def create_app():
         if not line:
             abort(404, "Line not found")
         db.session.delete(line)
+        db.session.commit()
+        return redirect(url_for("packages_detail", package_id=package_id))
+    
+    @app.post("/packages/<int:package_id>/pack")
+    @login_required
+    def packages_pack(package_id: int):
+        from models import PackageHead as PH
+        pkg = db.session.get(PH, package_id)
+        if not pkg:
+            abort(404, "Package not found")
+        if pkg.status != "open":
+            abort(400, "Package not open")
+        pkg.status = "packed"
         db.session.commit()
         return redirect(url_for("packages_detail", package_id=package_id))
 

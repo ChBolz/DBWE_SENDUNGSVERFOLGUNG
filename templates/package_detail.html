@@ -37,6 +37,12 @@
     {% endif %}
   </div>
 
+  {% if not locked %}
+    <form method="post" action="{{ url_for('packages_pack', package_id=pkg.id) }}" style="display:inline; margin-left:12px;">
+      <button type="submit">Pack this package</button>
+    </form>
+  {% endif %}
+
   <h2>Items in this package</h2>
   <table>
     <thead>
