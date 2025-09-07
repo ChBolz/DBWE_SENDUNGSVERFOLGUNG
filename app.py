@@ -312,6 +312,32 @@ def register_cli(app):
         db.session.commit()
         print("Seeded 3 items.")
 
+def register_cli(app):
+    @app.cli.command("seed-items")
+    def seed_items():
+        from models import Item as ItemModel
+        if db.session.execute(db.select(ItemModel)).first():
+            print("Items already exist — skipping.")
+            return
+        db.session.add_all([
+            ItemModel(description="Karton klein", base_unit="pcs"),
+            ItemModel(description="Karton gross", base_unit="pcs"),
+            ItemModel(description="Klebeband", base_unit="roll"),
+        ])
+        db.session.commit()
+        print("Seeded 3 items.")
+
+    @app.cli.command("seed-stock")
+    def seed_stock():
+        from models import Item, Stock
+        # simple defaults: 100 of each item
+        items = db.session.execute(db.select(Item)).scalars().all()
+        for it in items:
+            if not db.session.get(Stock, it.id):
+                db.session.add(Stock(item_id=it.id, quantity_on_hand=100))
+        db.session.commit()
+        print("Seeded stock with 100 units per item.")
+
 
 if __name__ == "__main__":
     app = create_app()
