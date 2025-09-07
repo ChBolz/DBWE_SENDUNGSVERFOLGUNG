@@ -41,8 +41,11 @@ class ShipmentHead(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     status: Mapped[str] = mapped_column(
-        Enum("open", "shipped", name="shipment_status"), default="open", nullable=False
+        Enum("open", "packed", "shipped", name="package_status"),
+        default="open",
+        nullable=False
     )
+
     # business shipment number (assigned on ship); unique and nullable until set
     shipment_number: Mapped[Optional[str]] = mapped_column(db.String(50), unique=True, nullable=True)
 
@@ -117,6 +120,14 @@ class Item(db.Model):
 
     lines = relationship("PackageLine", back_populates="item")
 
+class Stock(db.Model):
+    __tablename__ = "stock"
+
+    # one row per item
+    item_id: Mapped[int] = mapped_column(ForeignKey("item.id"), primary_key=True)
+    quantity_on_hand: Mapped[int] = mapped_column(db.Integer, nullable=False)
+
+    item = relationship("Item")
 
 # -----------------------
 # PackageLine (composite PK)
