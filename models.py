@@ -1,23 +1,37 @@
 from datetime import datetime
+from typing import Optional
+
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy import UniqueConstraint, CheckConstraint, Enum, ForeignKey
 from sqlalchemy.orm import relationship, Mapped, mapped_column
 from app import db
+from flask_login import UserMixin
+from werkzeug.security import generate_password_hash, check_password_hash
+
 
 # -----------------------
 # User
 # -----------------------
-class User(db.Model):
+class User(db.Model, UserMixin):
     __tablename__ = "user"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    username: Mapped[str] = mapped_column(db.String(64), unique=True, nullable=False)
-    email: Mapped[str] = mapped_column(db.String(120), unique=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(db.String(128), nullable=False)
+    # (classic style columns are fine to mix with Mapped/mapped_column)
+    id = db.Column(db.Integer, primary_key=True)
+    username = db.Column(db.String(64), unique=True, nullable=False)
+    email = db.Column(db.String(120), unique=True, nullable=False)
+    password_hash = db.Column(db.String(128), nullable=False)
 
-    # created shipments / packages (via FKs in those tables)
+    # relationships to match back_populates on ShipmentHead/PackageHead
     shipments = relationship("ShipmentHead", back_populates="creator", cascade="all,delete-orphan")
     packages = relationship("PackageHead", back_populates="creator", cascade="all,delete-orphan")
+
+    # password helpers
+    def set_password(self, raw: str) -> None:
+        self.password_hash = generate_password_hash(raw)
+
+    def check_password(self, raw: str) -> bool:
+        return check_password_hash(self.password_hash, raw)
+
 
 # -----------------------
 # ShipmentHead
@@ -29,10 +43,15 @@ class ShipmentHead(db.Model):
     status: Mapped[str] = mapped_column(
         Enum("open", "shipped", name="shipment_status"), default="open", nullable=False
     )
+    # business shipment number (assigned on ship); unique and nullable until set
+    shipment_number: Mapped[Optional[str]] = mapped_column(db.String(50), unique=True, nullable=True)
+
     created_by: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+    # back to User.shipments
     creator = relationship("User", back_populates="shipments")
+
     # association-object pattern: shipment has many lines; each line points to a package
     lines = relationship("ShipmentLine", back_populates="shipment", cascade="all,delete-orphan")
 
@@ -45,6 +64,7 @@ class ShipmentHead(db.Model):
         viewonly=True,
     )
 
+
 # -----------------------
 # PackageHead
 # -----------------------
@@ -56,11 +76,12 @@ class PackageHead(db.Model):
         Enum("open", "shipped", name="package_status"), default="open", nullable=False
     )
     # Business shipment number gets copied here on ship (not a FK)
-    shipment_number: Mapped[str | None] = mapped_column(db.String(50), nullable=True)
+    shipment_number: Mapped[Optional[str]] = mapped_column(db.String(50), nullable=True)
 
     created_by: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(db.DateTime, default=datetime.utcnow, nullable=False)
 
+    # back to User.packages
     creator = relationship("User", back_populates="packages")
 
     # a package can appear in at most one shipment (enforced in ShipmentLine via UNIQUE)
@@ -68,6 +89,7 @@ class PackageHead(db.Model):
 
     # package has many lines (items)
     lines = relationship("PackageLine", back_populates="package", cascade="all,delete-orphan")
+
 
 # -----------------------
 # ShipmentLine (composite PK)
@@ -82,6 +104,7 @@ class ShipmentLine(db.Model):
     shipment = relationship("ShipmentHead", back_populates="lines")
     package = relationship("PackageHead", back_populates="shipment_link")
 
+
 # -----------------------
 # Item
 # -----------------------
@@ -90,9 +113,10 @@ class Item(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     description: Mapped[str] = mapped_column(db.String(255), nullable=False)
-    base_unit: Mapped[str] = mapped_column(db.String(32), nullable=True)
+    base_unit: Mapped[Optional[str]] = mapped_column(db.String(32), nullable=True)
 
     lines = relationship("PackageLine", back_populates="item")
+
 
 # -----------------------
 # PackageLine (composite PK)

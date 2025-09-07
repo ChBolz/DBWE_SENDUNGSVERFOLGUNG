@@ -34,5 +34,8 @@
       {% endif %}
     </tbody>
   </table>
+  <form method="post" action="{{ url_for('logout') }}" style="display:inline">
+    <button type="submit">Logout</button>
+  </form>
 </body>
 </html>
