@@ -76,8 +76,11 @@ class PackageHead(db.Model):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     status: Mapped[str] = mapped_column(
-        Enum("open", "shipped", name="package_status"), default="open", nullable=False
+        Enum("open", "packed", "shipped", name="package_status"),
+        default="open",
+        nullable=False
     )
+
     # Business shipment number gets copied here on ship (not a FK)
     shipment_number: Mapped[Optional[str]] = mapped_column(db.String(50), nullable=True)
 
