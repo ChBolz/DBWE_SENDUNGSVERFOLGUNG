@@ -35,7 +35,6 @@ def create_app():
 
     # -------- Home (private) --------
     @app.route("/")
-    @login_required
     def index():
         return render_template("index.html")
 
@@ -101,7 +100,7 @@ def create_app():
     @login_required
     def logout():
         logout_user()
-        return redirect(url_for("login"))
+        return redirect(url_for("index"))
 
     # -------- Items (private) --------
     @app.get("/items")
