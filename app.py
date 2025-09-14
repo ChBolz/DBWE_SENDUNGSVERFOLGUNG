@@ -1,10 +1,11 @@
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, abort, flash
+from flask import Flask, render_template, request, redirect, url_for, abort, jsonify, current_app
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from flask_login import (
     LoginManager, login_user, login_required, logout_user, current_user
 )
+from flask import Blueprint
 from config import Config
 
 db = SQLAlchemy()
@@ -20,20 +21,19 @@ def create_app():
 
     # --- Flask-Login setup ---
     login_manager.init_app(app)
-    login_manager.login_view = "login"     # where to send unauthenticated users
+    login_manager.login_view = "login"
     login_manager.login_message_category = "info"
 
-    # Import models here so metadata is registered
+    # Import models so metadata is registered
     from models import (
-        User, ShipmentHead, PackageHead, ShipmentLine, Item, PackageLine
+        User, ShipmentHead, PackageHead, ShipmentLine, Item, PackageLine, Stock
     )  # noqa: F401
 
     @login_manager.user_loader
     def load_user(user_id: str):
-        # SQLAlchemy 2.x way to get by PK
         return db.session.get(User, int(user_id))
 
-    # -------- Home (private) --------
+    # -------- Home (public) --------
     @app.route("/")
     def index():
         return render_template("index.html")
@@ -55,12 +55,10 @@ def create_app():
         ).scalar_one_or_none()
 
         if not user or not user.check_password(password):
-            # keep it simple: render template with a message (no flash needed)
             return render_template("login.html", message="Invalid username or password"), 401
 
-        login_user(user)  # creates session
+        login_user(user)
         next_url = request.args.get("next")
-        # very small safelist: only relative paths
         if next_url and next_url.startswith("/"):
             return redirect(next_url)
         return redirect(url_for("shipments_list"))
@@ -78,11 +76,9 @@ def create_app():
         email = request.form.get("email", "").strip()
         password = request.form.get("password", "")
 
-        # minimal validation
         if not username or not email or not password:
             return render_template("register.html", message="All fields are required"), 400
 
-        # uniqueness checks
         exists = db.session.execute(
             db.select(User).where((User.username == username) | (User.email == email))
         ).scalar_one_or_none()
@@ -102,14 +98,6 @@ def create_app():
         logout_user()
         return redirect(url_for("index"))
 
-    # -------- Items (private) --------
-    @app.get("/items")
-    @login_required
-    def list_items():
-        from models import Item as ItemModel
-        items = db.session.execute(db.select(ItemModel).order_by(ItemModel.id)).scalars().all()
-        return render_template("items.html", items=items)
-
     # ------------ Helpers ------------
     def _get_shipment_or_404(shipment_id: int):
         from models import ShipmentHead
@@ -117,6 +105,14 @@ def create_app():
         if not sh:
             abort(404, "Shipment not found")
         return sh
+
+    # -------- Items (private) --------
+    @app.get("/items")
+    @login_required
+    def list_items():
+        from models import Item as ItemModel
+        items = db.session.execute(db.select(ItemModel).order_by(ItemModel.id)).scalars().all()
+        return render_template("items.html", items=items)
 
     # ------------ Shipments (private) ------------
     @app.get("/shipments")
@@ -254,7 +250,6 @@ def create_app():
             qty = int(request.form.get("quantity", "0"))
         except ValueError:
             return redirect(url_for("packages_detail", package_id=package_id))
-
         if qty <= 0:
             return redirect(url_for("packages_detail", package_id=package_id))
 
@@ -274,12 +269,10 @@ def create_app():
             .where(SH.status == "open", PL.item_no == item_id)
         ).scalar_one()
 
-        # Will total reservation exceed on-hand if we add qty?
         if reserved + qty > on_hand:
-            # Optional: show a friendly message
             return redirect(url_for("packages_detail", package_id=package_id))
 
-        # upsert (package_no, item_no) unique
+        # upsert
         existing = db.session.execute(
             db.select(PL).where(PL.package_no == package_id, PL.item_no == item_id)
         ).scalar_one_or_none()
@@ -317,7 +310,7 @@ def create_app():
         db.session.delete(line)
         db.session.commit()
         return redirect(url_for("packages_detail", package_id=package_id))
-    
+
     @app.post("/packages/<int:package_id>/pack")
     @login_required
     def packages_pack(package_id: int):
@@ -331,9 +324,113 @@ def create_app():
         db.session.commit()
         return redirect(url_for("packages_detail", package_id=package_id))
 
-    # --- keep your existing API blueprint registration here (unchanged) ---
-    # app.register_blueprint(api, url_prefix="/api")
+    # ---------------------- API BLUEPRINT ----------------------
+    api = Blueprint("api", __name__, url_prefix="/api")
 
+    def _require_api_key():
+        key = request.headers.get("X-API-KEY") or request.args.get("api_key")
+        if not key or key != current_app.config.get("API_KEY", "dev-api-key"):
+            return jsonify(error="Unauthorized"), 401
+
+    @api.get("/health")
+    def api_health():
+        maybe_err = _require_api_key()
+        if maybe_err:
+            return maybe_err
+        # tiny DB ping
+        db.session.execute(db.select(db.literal(1))).scalar_one()
+        return jsonify(status="ok")
+
+    @api.get("/shipments")
+    def api_shipments():
+        maybe_err = _require_api_key()
+        if maybe_err:
+            return maybe_err
+        from models import ShipmentHead as SH, ShipmentLine as SL
+        rows = db.session.execute(
+            db.select(
+                SH.id, SH.status, SH.shipment_number, SH.created_by, SH.created_at,
+                db.func.count(SL.package_no).label("package_count"),
+            ).join(SL, SL.shipment_no == SH.id, isouter=True)
+             .group_by(SH.id).order_by(SH.id.desc())
+        ).all()
+        data = [
+            {
+                "id": r.id,
+                "status": r.status,
+                "shipment_number": r.shipment_number,
+                "created_by": r.created_by,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "package_count": int(r.package_count or 0),
+            }
+            for r in rows
+        ]
+        return jsonify(data)
+
+    @api.get("/shipments/<int:shipment_id>")
+    def api_shipment_detail(shipment_id: int):
+        maybe_err = _require_api_key()
+        if maybe_err:
+            return maybe_err
+        from models import ShipmentHead as SH, ShipmentLine as SL
+        sh = db.session.get(SH, shipment_id)
+        if not sh:
+            return jsonify(error="Not found"), 404
+        pkg_rows = db.session.execute(
+            db.select(SL.line_no, SL.package_no)
+              .where(SL.shipment_no == sh.id)
+              .order_by(SL.line_no.asc())
+        ).all()
+        return jsonify(
+            {
+                "id": sh.id,
+                "status": sh.status,
+                "shipment_number": sh.shipment_number,
+                "created_by": sh.created_by,
+                "created_at": sh.created_at.isoformat() if sh.created_at else None,
+                "packages": [{"line_no": ln, "package_id": pid} for (ln, pid) in pkg_rows],
+            }
+        )
+
+    @api.get("/packages/<int:package_id>")
+    def api_package_detail(package_id: int):
+        maybe_err = _require_api_key()
+        if maybe_err:
+            return maybe_err
+        from models import PackageHead as PH, PackageLine as PL, Item as IT
+        pkg = db.session.get(PH, package_id)
+        if not pkg:
+            return jsonify(error="Not found"), 404
+        lines = db.session.execute(
+            db.select(PL, IT)
+              .join(IT, IT.id == PL.item_no)
+              .where(PL.package_no == package_id)
+              .order_by(PL.line_no.asc())
+        ).all()
+        return jsonify(
+            {
+                "id": pkg.id,
+                "status": pkg.status,
+                "shipment_number": pkg.shipment_number,
+                "created_by": pkg.created_by,
+                "created_at": pkg.created_at.isoformat() if pkg.created_at else None,
+                "lines": [
+                    {
+                        "line_no": pl.line_no,
+                        "item_id": it.id,
+                        "description": it.description,
+                        "base_unit": it.base_unit,
+                        "quantity": pl.quantity,
+                    }
+                    for (pl, it) in lines
+                ],
+            }
+        )
+
+    # Register API
+    app.register_blueprint(api)
+
+    # CLI
     register_cli(app)
     return app
 
@@ -353,25 +450,9 @@ def register_cli(app):
         db.session.commit()
         print("Seeded 3 items.")
 
-def register_cli(app):
-    @app.cli.command("seed-items")
-    def seed_items():
-        from models import Item as ItemModel
-        if db.session.execute(db.select(ItemModel)).first():
-            print("Items already exist — skipping.")
-            return
-        db.session.add_all([
-            ItemModel(description="Karton klein", base_unit="pcs"),
-            ItemModel(description="Karton gross", base_unit="pcs"),
-            ItemModel(description="Klebeband", base_unit="roll"),
-        ])
-        db.session.commit()
-        print("Seeded 3 items.")
-
     @app.cli.command("seed-stock")
     def seed_stock():
         from models import Item, Stock
-        # simple defaults: 100 of each item
         items = db.session.execute(db.select(Item)).scalars().all()
         for it in items:
             if not db.session.get(Stock, it.id):
